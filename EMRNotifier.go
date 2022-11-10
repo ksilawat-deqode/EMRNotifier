@@ -105,6 +105,10 @@ func HandleEvent(event events.CloudWatchEvent) {
 			log.Printf("Failed to get job details for jobId: %v with error: %v\n", jobId, err.Error())
 			return
 		}
+		if updatedJobStatus == "SUCCESS"{
+			updatedJobStatus = "DATA_TRANSFER"
+		}
+
 		UpdateJob(jobDetail, updatedJobStatus)
 	}
 }
