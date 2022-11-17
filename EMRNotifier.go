@@ -45,6 +45,32 @@ func main() {
 	lambda.Start(HandleEvent)
 }
 
+func HandleEvent(event events.CloudWatchEvent) {
+	if event.Source == "aws.emr-serverless" {
+
+		log.Printf("Initiating EMR Notifier\n")
+
+		var eventContext map[string]interface{}
+		if err := json.Unmarshal(event.Detail, &eventContext); err != nil {
+			log.Printf("Failed to serializer data with error: %v\n", err.Error())
+			return
+		}
+		jobId := fmt.Sprint(eventContext["jobRunId"])
+		updatedJobStatus := fmt.Sprint(eventContext["state"])
+
+		jobDetail, err := GetJobDetail(jobId)
+		if err != nil {
+			log.Printf("Failed to get job details for jobId: %v with error: %v\n", jobId, err.Error())
+			return
+		}
+		if updatedJobStatus == "SUCCESS"{
+			updatedJobStatus = "DATA_TRANSFER"
+		}
+
+		UpdateJob(jobDetail, updatedJobStatus)
+	}
+}
+
 func GetJobDetail(jobId string) (JobDetail, error) {
 	log.Printf("Initiating GetJobDetail with jobId:%v", jobId)
 
@@ -85,30 +111,4 @@ func UpdateJob(jobDetail JobDetail, updatedJobStatus string) {
 	}
 
 	log.Printf("%v-> Successfully Updated jobStatus: %v for jobId: %v\n", jobDetail.Id, updatedJobStatus, jobDetail.JobId)
-}
-
-func HandleEvent(event events.CloudWatchEvent) {
-	if event.Source == "aws.emr-serverless" {
-
-		log.Printf("Initiating EMR Notifier\n")
-
-		var eventContext map[string]interface{}
-		if err := json.Unmarshal(event.Detail, &eventContext); err != nil {
-			log.Printf("Failed to serializer data with error: %v\n", err.Error())
-			return
-		}
-		jobId := fmt.Sprint(eventContext["jobRunId"])
-		updatedJobStatus := fmt.Sprint(eventContext["state"])
-
-		jobDetail, err := GetJobDetail(jobId)
-		if err != nil {
-			log.Printf("Failed to get job details for jobId: %v with error: %v\n", jobId, err.Error())
-			return
-		}
-		if updatedJobStatus == "SUCCESS"{
-			updatedJobStatus = "DATA_TRANSFER"
-		}
-
-		UpdateJob(jobDetail, updatedJobStatus)
-	}
 }
