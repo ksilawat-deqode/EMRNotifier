@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	_ "github.com/lib/pq"
+	log "github.com/sirupsen/logrus"
 )
 
 type JobDetail struct {
@@ -19,11 +19,18 @@ type JobDetail struct {
 	RequestId   string `json:"requestId"`
 	Query       string `json:"query"`
 	Destination string `json:"destination"`
+	Jti         string `json:"jti"`
+	Region      string `json:"cross_bucket_region"`
+	ClientIp    string `json:"client_ip"`
 }
 
 var db *sql.DB
+var logger *log.Entry
+var source string
 
 func init() {
+	log.SetFormatter(&log.JSONFormatter{})
+
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
 	user := os.Getenv("DB_USER")
@@ -39,6 +46,8 @@ func init() {
 		databaseName,
 	)
 	db, _ = sql.Open("postgres", connection)
+
+	source = "EMRNotifier"
 }
 
 func main() {
@@ -48,11 +57,14 @@ func main() {
 func HandleEvent(event events.CloudWatchEvent) {
 	if event.Source == "aws.emr-serverless" {
 
-		log.Printf("Initiating EMR Notifier\n")
+		logger = log.WithFields(log.Fields{
+			"source": source,
+		})
+		logger.Info("Initiating EMR Notifier")
 
 		var eventContext map[string]interface{}
 		if err := json.Unmarshal(event.Detail, &eventContext); err != nil {
-			log.Printf("Failed to serializer data with error: %v\n", err.Error())
+			logger.Error(fmt.Sprintf("Failed to serializer data with error: %v", err.Error()))
 			return
 		}
 		jobId := fmt.Sprint(eventContext["jobRunId"])
@@ -60,21 +72,31 @@ func HandleEvent(event events.CloudWatchEvent) {
 
 		jobDetail, err := GetJobDetail(jobId)
 		if err != nil {
-			log.Printf("Failed to get job details for jobId: %v with error: %v\n", jobId, err.Error())
+			logger.Error(fmt.Sprintf("Failed to get job details for jobId: %v with error: %v", jobId, err.Error()))
 			return
 		}
-		if updatedJobStatus == "SUCCESS"{
+		if updatedJobStatus == "SUCCESS" {
 			updatedJobStatus = "DATA_TRANSFER"
 		}
+
+		logger = logger.WithFields(log.Fields{
+			"id": jobDetail.Id,
+			"jti": jobDetail.Jti,
+			"clientIp": jobDetail.ClientIp,
+			"skyflowRequestId": jobDetail.RequestId,
+			"region": jobDetail.Region,
+			"query": jobDetail.Query,
+			"destinationBucket": jobDetail.Destination,
+		})
 
 		UpdateJob(jobDetail, updatedJobStatus)
 	}
 }
 
 func GetJobDetail(jobId string) (JobDetail, error) {
-	log.Printf("Initiating GetJobDetail with jobId:%v", jobId)
+	logger.Info(fmt.Sprintf("Initiating GetJobDetail with jobId:%v", jobId))
 
-	statement := `SELECT id, jobid, jobstatus, requestid, query, destination FROM emr_job_details WHERE jobid=$1`
+	statement := `SELECT id, jobid, jobstatus, requestid, query, destination, jti, cross_bucket_region, client_ip FROM emr_job_details WHERE jobid=$1`
 	var jobDetail JobDetail
 
 	record := db.QueryRow(statement, jobId)
@@ -86,6 +108,9 @@ func GetJobDetail(jobId string) (JobDetail, error) {
 		&jobDetail.RequestId,
 		&jobDetail.Query,
 		&jobDetail.Destination,
+		&jobDetail.Jti,
+		&jobDetail.Region,
+		&jobDetail.ClientIp,
 	); err {
 	case sql.ErrNoRows:
 		return jobDetail, sql.ErrNoRows
@@ -97,18 +122,18 @@ func GetJobDetail(jobId string) (JobDetail, error) {
 }
 
 func UpdateJob(jobDetail JobDetail, updatedJobStatus string) {
-	log.Printf("%v-> Initiating UpdateJob", jobDetail.Id)
+	logger.Info("Initiating UpdateJob")
 
 	statement := `UPDATE emr_job_details SET jobstatus = $1 WHERE jobid = $2;`
 
-	log.Printf("%v-> Updating record for jobId: %v\n", jobDetail.Id, jobDetail.JobId)
+	logger.Info(fmt.Sprintf("Updating record for jobId: %v", jobDetail.JobId))
 
 	_, err := db.Exec(statement, updatedJobStatus, jobDetail.JobId)
 
 	if err != nil {
-		log.Printf("%v-> Failed to update record for jobId: %v with error: %v\n", jobDetail.Id, jobDetail.JobId, err.Error())
+		logger.Error(fmt.Sprintf("Failed to update record for jobId: %v with error: %v", jobDetail.JobId, err.Error()))
 		return
 	}
 
-	log.Printf("%v-> Successfully Updated jobStatus: %v for jobId: %v\n", jobDetail.Id, updatedJobStatus, jobDetail.JobId)
+	logger.Info(fmt.Sprintf("Successfully Updated jobStatus: %v for jobId: %v", updatedJobStatus, jobDetail.JobId))
 }
