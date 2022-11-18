@@ -80,12 +80,12 @@ func HandleEvent(event events.CloudWatchEvent) {
 		}
 
 		logger = logger.WithFields(log.Fields{
-			"id": jobDetail.Id,
-			"jti": jobDetail.Jti,
-			"clientIp": jobDetail.ClientIp,
-			"skyflowRequestId": jobDetail.RequestId,
-			"region": jobDetail.Region,
-			"query": jobDetail.Query,
+			"queryId":           jobDetail.Id,
+			"jti":               jobDetail.Jti,
+			"clientIp":          jobDetail.ClientIp,
+			"skyflowRequestId":  jobDetail.RequestId,
+			"region":            jobDetail.Region,
+			"query":             jobDetail.Query,
 			"destinationBucket": jobDetail.Destination,
 		})
 
