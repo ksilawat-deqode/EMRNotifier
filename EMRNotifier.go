@@ -8,6 +8,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/emrserverless"
 	_ "github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
 )
@@ -27,6 +30,7 @@ type JobDetail struct {
 var db *sql.DB
 var logger *log.Entry
 var source string
+var service *emrserverless.EMRServerless
 
 func init() {
 	log.SetFormatter(&log.JSONFormatter{})
@@ -36,6 +40,7 @@ func init() {
 	user := os.Getenv("DB_USER")
 	password := os.Getenv("DB_PASSWORD")
 	databaseName := os.Getenv("DB_NAME")
+	region := os.Getenv("REGION")
 
 	connection := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
@@ -46,6 +51,11 @@ func init() {
 		databaseName,
 	)
 	db, _ = sql.Open("postgres", connection)
+
+	sess, _ := session.NewSession(&aws.Config{
+		Region: aws.String(region),
+	})
+	service = emrserverless.New(sess)
 
 	source = "EMRNotifier"
 }
@@ -68,6 +78,7 @@ func HandleEvent(event events.CloudWatchEvent) {
 			return
 		}
 		jobId := fmt.Sprint(eventContext["jobRunId"])
+		applicationId := fmt.Sprint(eventContext["applicationId"])
 		updatedJobStatus := fmt.Sprint(eventContext["state"])
 
 		jobDetail, err := GetJobDetail(jobId)
@@ -90,6 +101,21 @@ func HandleEvent(event events.CloudWatchEvent) {
 		})
 
 		UpdateJob(jobDetail, updatedJobStatus)
+
+		if updatedJobStatus == "FAILED" {
+			params := &emrserverless.GetJobRunInput{
+				ApplicationId: &applicationId,
+				JobRunId:      &jobId,
+			}
+
+			jobRunOutput, err := service.GetJobRun(params)
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to get EMR Job details with error: %v", err.Error()))
+				return
+			}
+
+			logger.Error(fmt.Sprintf("EMR job failed with details: %v", jobRunOutput))
+		}
 	}
 }
 
